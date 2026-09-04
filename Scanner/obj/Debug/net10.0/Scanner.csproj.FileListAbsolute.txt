@@ -1,0 +1,14 @@
+C:\Users\Cesar David\Documents\Scanner\bin\Debug\net10.0\Scanner.exe
+C:\Users\Cesar David\Documents\Scanner\bin\Debug\net10.0\Scanner.deps.json
+C:\Users\Cesar David\Documents\Scanner\bin\Debug\net10.0\Scanner.runtimeconfig.json
+C:\Users\Cesar David\Documents\Scanner\bin\Debug\net10.0\Scanner.dll
+C:\Users\Cesar David\Documents\Scanner\bin\Debug\net10.0\Scanner.pdb
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.AssemblyInfoInputs.cache
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.AssemblyInfo.cs
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.csproj.CoreCompileInputs.cache
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.dll
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\refint\Scanner.dll
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.pdb
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\Scanner.genruntimeconfig.cache
+C:\Users\Cesar David\Documents\Scanner\obj\Debug\net10.0\ref\Scanner.dll
