@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using NanoRBCompiler.TablaSimbolos;
 
 namespace NanoRBCompiler.Semantico
 {
@@ -143,17 +145,45 @@ namespace NanoRBCompiler.Semantico
     // --- ANALIZADOR SEMÁNTICO ---
     public class AnalizadorSemantico
     {
-        private readonly Dictionary<string, TipoDato> _tablaSimbolos = new();
+        // Límites de la representación de la Fase 6 (16 bits):
+        //   whole: complemento a dos        -> 0..32767 como literal (NanoRB no tiene '-' unario)
+        //   dec:   punto fijo escalado x10  -> hasta 3276.7 con un decimal
+        private const long MaxWhole = 32767;
+        private const decimal MaxDec = 3276.7m;
+
+        // UNA sola tabla de símbolos para todas las fases (la misma que llena el scanner).
+        private readonly TablaSimbolosManager _tabla;
         private readonly List<string> _erroresSemanticos = new();
+        private readonly List<string> _advertencias = new();
+
+        public AnalizadorSemantico() : this(new TablaSimbolosManager()) { }
+
+        public AnalizadorSemantico(TablaSimbolosManager tabla)
+        {
+            _tabla = tabla;
+        }
+
+        // --- Lo que necesita el generador de código ---
+        public TablaSimbolosManager Tabla => _tabla;
+        public bool TieneErrores => _erroresSemanticos.Count > 0;
+        public int TotalErrores => _erroresSemanticos.Count;
+        public IReadOnlyList<string> Errores => _erroresSemanticos;
+        public IReadOnlyList<string> Advertencias => _advertencias;
 
         public void RegistrarDeclaracion(string nombre, TipoDato tipo, int linea)
         {
-            if (_tablaSimbolos.ContainsKey(nombre))
+            var simbolo = _tabla.RegistrarIdentificador(nombre, 100, linea);
+
+            // Ya tiene tipo whole/dec -> declaración doble. Se conserva el tipo original y no se duplica la entrada.
+            if (simbolo.EsVariableNumerica)
             {
                 ReportarError(linea, "Declaración doble", $"La variable '{nombre}' ya fue declarada anteriormente.");
                 return;
             }
-            _tablaSimbolos[nombre] = tipo;
+
+            // Desconocido (caso normal) o Error (se usó antes de declararla; ese error ya se reportó).
+            simbolo.Tipo = tipo;
+            simbolo.OrdenDeclaracion = _tabla.NuevoOrdenDeclaracion();
         }
 
         public TipoDato ComprobarTipos(NodoAST? nodo)
@@ -166,7 +196,7 @@ namespace NanoRBCompiler.Semantico
                     foreach (var inst in prog.Instrucciones) ComprobarTipos(inst);
                     return TipoDato.Desconocido;
 
-                // CAMBIO 3: la declaración se procesa al recorrer el AST, en el orden del programa
+                // La declaración se procesa al recorrer el AST, en el orden del programa
                 case NodoDeclaracion decl:
                     RegistrarDeclaracion(decl.Nombre, decl.Tipo, decl.Linea);
                     decl.TipoResultado = TipoDato.Desconocido;
@@ -174,17 +204,22 @@ namespace NanoRBCompiler.Semantico
 
                 case NodoLiteral lit:
                     lit.TipoResultado = lit.TipoLiteral;
+                    ValidarLiteral(lit);
                     return lit.TipoResultado;
 
                 case NodoIdentificador id:
-                    if (!_tablaSimbolos.ContainsKey(id.Nombre))
+                {
+                    var simbolo = _tabla.RegistrarIdentificador(id.Nombre, 100, id.Linea);
+                    if (!simbolo.TieneTipo)
                     {
                         ReportarError(id.Linea, "Variable no declarada", $"La variable '{id.Nombre}' no ha sido declarada.");
-                        id.TipoResultado = TipoDato.Error; // <-- MECANISMO ANTI-CASCADA
-                        return TipoDato.Error;
+                        // ANTI-CASCADA: el símbolo queda con TipoDato.Error en la tabla; así los usos
+                        // posteriores (aunque sean en otras líneas) se contienen sin reportar de nuevo.
+                        simbolo.Tipo = TipoDato.Error;
                     }
-                    id.TipoResultado = _tablaSimbolos[id.Nombre];
+                    id.TipoResultado = simbolo.Tipo;
                     return id.TipoResultado;
+                }
 
                 case NodoOperacionBinaria op:
                     TipoDato tIzq = ComprobarTipos(op.Izquierdo);
@@ -211,23 +246,35 @@ namespace NanoRBCompiler.Semantico
                     {
                         ReportarError(op.Linea, "Tipos incompatibles", $"No se puede realizar la operación '{op.Operador}' entre {tIzq} y {tDer}.");
                         op.TipoResultado = TipoDato.Error;
+                        return op.TipoResultado;
+                    }
+
+                    // División entre un literal cero: el 8086 dispararía INT 0, mejor detectarlo en compilación.
+                    // (La división por una VARIABLE que vale 0 sigue siendo un error de ejecución.)
+                    if (op.Operador == "/" && op.Derecho is NodoLiteral divisor && EsLiteralCero(divisor))
+                    {
+                        ReportarError(op.Linea, "División entre cero", "El divisor es el literal 0.");
+                        op.TipoResultado = TipoDato.Error;
                     }
                     return op.TipoResultado;
 
                 case NodoAsignacion asig:
+                {
                     TipoDato tipoExpr = ComprobarTipos(asig.Expresion);
 
-                    if (!_tablaSimbolos.ContainsKey(asig.Variable))
+                    var simbolo = _tabla.RegistrarIdentificador(asig.Variable, 100, asig.Linea);
+                    if (!simbolo.TieneTipo)
                     {
                         ReportarError(asig.Linea, "Variable no declarada", $"No se puede asignar a la variable no declarada '{asig.Variable}'.");
+                        simbolo.Tipo = TipoDato.Error; // ANTI-CASCADA (ver NodoIdentificador)
                         asig.TipoResultado = TipoDato.Error;
                         return TipoDato.Error;
                     }
 
-                    TipoDato tipoVar = _tablaSimbolos[asig.Variable];
+                    TipoDato tipoVar = simbolo.Tipo;
 
-                    // ANTI-CASCADA: Si la expresión traía error, no emitir error secundario en la asignación
-                    if (tipoExpr == TipoDato.Error)
+                    // ANTI-CASCADA: variable o expresión ya erróneas -> no emitir error secundario
+                    if (tipoVar == TipoDato.Error || tipoExpr == TipoDato.Error)
                     {
                         asig.TipoResultado = TipoDato.Error;
                         return TipoDato.Error;
@@ -249,8 +296,10 @@ namespace NanoRBCompiler.Semantico
                         return TipoDato.Error;
                     }
 
+                    // whole -> dec es válido (promoción). El generador de código inserta int2float.
                     asig.TipoResultado = tipoVar;
                     return tipoVar;
+                }
 
                 case NodoCondicion cond:
                     TipoDato cIzq = ComprobarTipos(cond.Izquierdo);
@@ -258,7 +307,7 @@ namespace NanoRBCompiler.Semantico
 
                     if (cIzq == TipoDato.Error || cDer == TipoDato.Error)
                     {
-                        cond.TipoResultado = TipoDato.Error; // CAMBIO 5: ahora también se guarda en el nodo
+                        cond.TipoResultado = TipoDato.Error;
                         return TipoDato.Error;
                     }
 
@@ -276,9 +325,7 @@ namespace NanoRBCompiler.Semantico
                 case NodoEntradaSalida es:
                     foreach (var elem in es.Elementos)
                     {
-                        // CAMBIO 1: antes, gets reportaba dos veces la misma variable no declarada
-                        // (una al visitar el identificador y otra en un "if" repetido).
-                        // Ahora el identificador se visita una sola vez y ahí mismo se reporta.
+                        // El identificador se visita una sola vez y ahí mismo se reporta si no está declarado.
                         if (es.Instruccion == "gets" && elem is not NodoIdentificador)
                             ReportarError(es.Linea, "Entrada inválida", "gets requiere el nombre de una variable.");
                         else
@@ -289,21 +336,61 @@ namespace NanoRBCompiler.Semantico
                 case NodoEstructuraControl ctrl:
                     ComprobarTipos(ctrl.Condicion);
                     foreach (var inst in ctrl.Cuerpo) ComprobarTipos(inst);
-                    // CAMBIO 2: se visita la alternativa (elsif encadenado o bloque else)
+                    // Se visita la alternativa (elsif encadenado o bloque else)
                     if (ctrl.Alternativa != null) ComprobarTipos(ctrl.Alternativa);
                     return TipoDato.Desconocido;
 
                 default:
-                    // CAMBIO 4: un nodo desconocido ya no falla en silencio
+                    // Un nodo desconocido no falla en silencio
                     ReportarError(nodo.Linea, "Nodo no soportado", $"El analizador semántico no reconoce el nodo '{nodo.GetType().Name}'.");
                     return TipoDato.Error;
             }
+        }
+
+        // ------------------------------------------------------------------
+        //  Validación de literales según la representación de 16 bits (Fase 6)
+        // ------------------------------------------------------------------
+        private void ValidarLiteral(NodoLiteral lit)
+        {
+            if (lit.TipoLiteral == TipoDato.Whole)
+            {
+                if (!long.TryParse(lit.Valor, NumberStyles.None, CultureInfo.InvariantCulture, out long v) || v > MaxWhole)
+                {
+                    ReportarError(lit.Linea, "Literal fuera de rango", $"El entero '{lit.Valor}' excede el máximo de {MaxWhole} (whole es de 16 bits).");
+                    lit.TipoResultado = TipoDato.Error;
+                }
+            }
+            else if (lit.TipoLiteral == TipoDato.Dec)
+            {
+                if (!decimal.TryParse(lit.Valor, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal d) || d > MaxDec)
+                {
+                    ReportarError(lit.Linea, "Literal fuera de rango", $"El real '{lit.Valor}' excede el máximo de {MaxDec.ToString(CultureInfo.InvariantCulture)} (dec usa punto fijo x10 en 16 bits).");
+                    lit.TipoResultado = TipoDato.Error;
+                }
+                else if (d * 10m != decimal.Truncate(d * 10m))
+                {
+                    // No bloquea la compilación: el generador trunca al primer decimal.
+                    decimal truncado = decimal.Truncate(d * 10m) / 10m;
+                    ReportarAdvertencia(lit.Linea, $"El real '{lit.Valor}' tiene más de un decimal; dec solo guarda uno (se usará {truncado.ToString("0.0", CultureInfo.InvariantCulture)}).");
+                }
+            }
+        }
+
+        private static bool EsLiteralCero(NodoLiteral lit)
+        {
+            if (lit.TipoLiteral != TipoDato.Whole && lit.TipoLiteral != TipoDato.Dec) return false;
+            return decimal.TryParse(lit.Valor, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal d) && d == 0m;
         }
 
         private void ReportarError(int linea, string tipo, string mensaje)
         {
             string err = $"[Línea {linea,2}] Error Semántico ({tipo}): {mensaje}";
             _erroresSemanticos.Add(err);
+        }
+
+        private void ReportarAdvertencia(int linea, string mensaje)
+        {
+            _advertencias.Add($"[Línea {linea,2}] Advertencia: {mensaje}");
         }
 
         public void ImprimirErrores()
@@ -320,6 +407,12 @@ namespace NanoRBCompiler.Semantico
                     Console.WriteLine(err);
                 }
             }
+
+            foreach (var adv in _advertencias)
+            {
+                Console.WriteLine(adv);
+            }
+
             Console.WriteLine($"\nTotal de errores semánticos detectados: {_erroresSemanticos.Count}");
         }
     }

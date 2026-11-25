@@ -22,8 +22,9 @@ namespace NanoRBCompiler.Scanner
     {
         public static ColumnaMatriz ObtenerColumna(char c)
         {
-            if (char.IsLetter(c)) return ColumnaMatriz.Letra;
-            if (char.IsDigit(c)) return ColumnaMatriz.Digito;
+            // La especificación pide [a-zA-Z] y [0-9]; char.IsLetter / char.IsDigit aceptarían ñ, á, dígitos árabes, etc.
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return ColumnaMatriz.Letra;
+            if (c >= '0' && c <= '9') return ColumnaMatriz.Digito;
 
             return c switch
             {
@@ -42,4 +43,4 @@ namespace NanoRBCompiler.Scanner
             };
         }
     }
-}
+}

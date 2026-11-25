@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NanoRBCompiler.Errores;
+using NanoRBCompiler.TablaSimbolos;
 
 namespace NanoRBCompiler.Scanner
 {
@@ -10,11 +11,14 @@ namespace NanoRBCompiler.Scanner
         private int _lineaActual = 1;
         private int _columnaActual = 1;
         private readonly ManejadorErrores _manejadorErrores;
+        private readonly TablaSimbolosManager? _tablaSimbolos;
 
-        public ScannerEngine(string codigoFuente, ManejadorErrores manejadorErrores)
+        // tablaSimbolos es opcional: si se pasa, cada identificador (token 100) se registra con su línea.
+        public ScannerEngine(string codigoFuente, ManejadorErrores manejadorErrores, TablaSimbolosManager? tablaSimbolos = null)
         {
             _codigoFuente = codigoFuente ?? string.Empty;
             _manejadorErrores = manejadorErrores;
+            _tablaSimbolos = tablaSimbolos;
         }
 
         public List<Token> EscanearTodo()
@@ -122,6 +126,7 @@ namespace NanoRBCompiler.Scanner
                 case "F100":
                     if (MatrizTransiciones.PalabrasReservadas.TryGetValue(lexema, out int codRes))
                         return new Token(codRes, lexema, _lineaActual, colInicio);
+                    _tablaSimbolos?.RegistrarIdentificador(lexema, 100, _lineaActual);
                     return new Token(100, lexema, _lineaActual, colInicio);
 
                 case "F101": return new Token(101, lexema, _lineaActual, colInicio);
@@ -187,4 +192,4 @@ namespace NanoRBCompiler.Scanner
             }
         }
     }
-}
+}

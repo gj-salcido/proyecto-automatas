@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
+using NanoRBCompiler.Errores;
+using NanoRBCompiler.Scanner;
 using NanoRBCompiler.Semantico;
+using NanoRBCompiler.TablaSimbolos;
 
 class Program
 {
     static void Main(string[] args)
     {
-        Console.WriteLine("================ COMPILADOR NANORB - FASE 3 SEMÁNTICO ================\n");
+        Console.WriteLine("================ COMPILADOR NANORB - FASES 1 A 3 + PREPARACIÓN FASE 6 ================\n");
 
         ProgramaEjercicio5();
         Console.WriteLine();
         ProgramaControlYEntradaSalida();
+        Console.WriteLine();
+        ProgramaBaseIntegrado();
     }
 
     // Atajos para escribir el AST (hasta que el parser de la Fase 2 lo construya solo)
@@ -137,5 +142,92 @@ class Program
 
         semantico.ComprobarTipos(programa);
         semantico.ImprimirErrores();
+    }
+
+    // ------------------------------------------------------------------
+    //  Programa base (el de los cuádruplos de la Fase 6), con el pipeline integrado:
+    //  scanner -> tabla de símbolos compartida -> semántico -> offsets para el .asm
+    //
+    //   1  start
+    //   2    # Declaración de variables
+    //   3    whole contador
+    //   4    dec total
+    //   5
+    //   6    contador = 1
+    //   7    total = 0.5
+    //   8
+    //   9    while contador <= 5
+    //  10      total = total + 1.5
+    //  11      contador = contador + 1
+    //  12    end
+    //  13
+    //  14    total = 10                     # whole -> dec: el generador insertará int2float
+    //  15    puts total
+    //  16  finish
+    // ------------------------------------------------------------------
+    static void ProgramaBaseIntegrado()
+    {
+        Console.WriteLine("--- Programa base: scanner + semántico + offsets (Fase 6) ---");
+
+        string fuente = string.Join("\n", new[]
+        {
+            "start",
+            "  # Declaración de variables",
+            "  whole contador",
+            "  dec total",
+            "",
+            "  contador = 1",
+            "  total = 0.5",
+            "",
+            "  while contador <= 5",
+            "    total = total + 1.5",
+            "    contador = contador + 1",
+            "  end",
+            "",
+            "  total = 10",
+            "  puts total",
+            "finish"
+        }) + "\n";
+
+        // 1) Léxico: llena la tabla con cada identificador y sus líneas
+        var tabla = new TablaSimbolosManager();
+        var erroresLexicos = new ManejadorErrores();
+        var tokens = new ScannerEngine(fuente, erroresLexicos, tabla).EscanearTodo();
+        Console.WriteLine($"Tokens reconocidos: {tokens.Count}");
+        erroresLexicos.ImprimirErrores();
+
+        // 2) Semántico: usa LA MISMA tabla y le agrega los tipos
+        var semantico = new AnalizadorSemantico(tabla);
+        var programa = new NodoPrograma();
+
+        programa.Instrucciones.Add(new NodoDeclaracion(TipoDato.Whole, "contador", 3));
+        programa.Instrucciones.Add(new NodoDeclaracion(TipoDato.Dec, "total", 4));
+        programa.Instrucciones.Add(new NodoAsignacion("contador", Ent("1", 6), 6));
+        programa.Instrucciones.Add(new NodoAsignacion("total", Real("0.5", 7), 7));
+        programa.Instrucciones.Add(new NodoEstructuraControl(
+            "while",
+            new NodoCondicion("<=", Id("contador", 9), Ent("5", 9), 9),
+            new List<NodoAST>
+            {
+                new NodoAsignacion("total", new NodoOperacionBinaria("+", Id("total", 10), Real("1.5", 10), 10), 10),
+                new NodoAsignacion("contador", new NodoOperacionBinaria("+", Id("contador", 11), Ent("1", 11), 11), 11)
+            },
+            9));
+        programa.Instrucciones.Add(new NodoAsignacion("total", Ent("10", 14), 14));
+        programa.Instrucciones.Add(new NodoEntradaSalida("puts", new List<NodoAST> { Id("total", 15) }, 15));
+
+        semantico.ComprobarTipos(programa);
+        semantico.ImprimirErrores();
+
+        // 3) Solo si no hay errores se asignan offsets y nombres para el ensamblador
+        if (semantico.TieneErrores)
+        {
+            Console.WriteLine("Hay errores semánticos: no se genera código objeto.");
+            return;
+        }
+
+        tabla.AsignarOffsets();
+        tabla.ImprimirTabla();
+        Console.WriteLine($"Variables en .DATA: {tabla.BytesVariables} bytes (los temporales t1..tN empiezan en {tabla.BytesVariables:X4}h)");
     }
 }
