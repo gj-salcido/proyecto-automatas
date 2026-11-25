@@ -60,6 +60,7 @@ namespace NanoRBCompiler.Scanner
                     // para que el ciclo principal lo reconozca como Token 118 (SALTO)
                     estadoActual = "q0";
                     lexema = "";
+                    columnaInicio = _columnaActual;   // el token 118 que sigue empieza en el '\n', no en el '#'
                     continue;
                 }
 
@@ -184,7 +185,7 @@ namespace NanoRBCompiler.Scanner
                     _manejadorErrores.ReportarError(503, "Cadena sin cerrar en la misma línea", _lineaActual, lexema);
                     return new Token(503, lexema, _lineaActual, colInicio);
 
-                default: // ERROR_500 o q99 (Carácter ilegal)
+                default: // q99 (carácter ilegal); ERROR_500/501/503 ya se manejan arriba
                     AvanzarPosicion(cActual);
                     string charErr = cActual.ToString();
                     _manejadorErrores.ReportarError(500, $"Carácter ilegal '{charErr}'", _lineaActual, charErr);

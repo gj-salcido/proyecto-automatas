@@ -288,8 +288,8 @@ namespace NanoRBCompiler.Semantico
                         return TipoDato.Error;
                     }
 
-                    if (tipoVar == TipoDato.Whole && tipoExpr == TipoDato.Cadena ||
-                        tipoVar == TipoDato.Dec && tipoExpr == TipoDato.Cadena)
+                    // tipoVar ya es Whole o Dec (Error y Desconocido se descartaron arriba)
+                    if (tipoExpr == TipoDato.Cadena)
                     {
                         ReportarError(asig.Linea, "Tipos incompatibles", $"No se puede asignar una cadena de texto a una variable numérica '{asig.Variable}'.");
                         asig.TipoResultado = TipoDato.Error;
@@ -362,7 +362,9 @@ namespace NanoRBCompiler.Semantico
             }
             else if (lit.TipoLiteral == TipoDato.Dec)
             {
-                if (!decimal.TryParse(lit.Valor, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal d) || d > MaxDec)
+                // Se compara el valor ya truncado a un decimal: 3276.75 se guarda como 3276.7 y sí cabe.
+                if (!decimal.TryParse(lit.Valor, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal d)
+                    || decimal.Truncate(d * 10m) / 10m > MaxDec)
                 {
                     ReportarError(lit.Linea, "Literal fuera de rango", $"El real '{lit.Valor}' excede el máximo de {MaxDec.ToString(CultureInfo.InvariantCulture)} (dec usa punto fijo x10 en 16 bits).");
                     lit.TipoResultado = TipoDato.Error;
